@@ -7,7 +7,7 @@ if [ -f /etc/os-release ]; then
         debian|ubuntu|linuxmint)
             ;;
         rhel|centos|fedora|rocky|almalinux|ol)
-			IS_DEBIAN=1
+            IS_DEBIAN=1
             ;;
         *)
             echo "Unknown: $ID"
@@ -87,13 +87,14 @@ else
 		socket=$(grep "^unix_socket_dir\b" $config_file|awk -F '=' '{print $2}')
 		socket=${socket:-/tmp}
 		port=$(ss -ltnp | awk -v pid="$pid" '
-        $0 ~ ("pid=" pid ",") {
-            split($4, a, ":")
-            print a[length(a)]
-        }
+                   $0 ~ ("pid=" pid ",") {
+                   split($4, a, ":")
+                   print a[length(a)]
+                   }
 		'|uniq)
 		if [[ "$config_file" == *.ini ]] && [[ -f "$config_file" ]]; then
-			echo 'PID:'$pid 'PORT:'$port 'SO_REUSEPORT:' `psql -A -U pgbouncer --port $port -h $socket -c 'show config'|grep so_reuseport|awk -F '|' '{print $2}'`
+#		    echo 'PID:'$pid 'PORT:'$port 'socket:' $socket	
+                    echo 'PID:'$pid 'PORT:'$port 'SO_REUSEPORT:' `psql -A -U pgbouncer --port $port -h $socket -c 'show config'|grep so_reuseport|awk -F '|' '{print $2}'`
 		fi
 	done
 fi
@@ -107,10 +108,22 @@ exit 101
 EOF
 chmod +x /usr/sbin/policy-rc.d'	
 fi		
+
+# Добавляем команды на checkpoint и длительные транзакции
+for pid in $(pgrep -f "(postgres|postmaster).*-D"); do
+    DATA_DIR=$(ps -p "$pid" -o cmd= | grep -oP '(?<=-D )\S+')
+    if [ -f "$DATA_DIR/postmaster.pid" ]; then
+       PORT=$(sed -n '4p' "$DATA_DIR/postmaster.pid")
+       echo 'First, on the master, then on the replicas, you need to run the following commands:'
+       echo 'psql -p' $PORT -c \'checkpoint\'
+       echo 'psql -p' $PORT -f ~/stuff/sql/db_activity9.6.sql
+       printf '\n'
+    fi
+done
+
+
 for VERSION in "${VERSIONS[@]}"; do
 	#Для найденных PostgreSQL формируем команды загрузки обновленной версии
-	#По идее сюда надо вставить чекпоинты что-то типа psql -p PORT -c 'checkpoint'
-	#А также вставить проверку длительных транзакций
 	if [ "$IS_DEBIAN" -eq 0 ]; then
 		echo 'sudo NEEDRESTART_MODE=l apt-get install --only-upgrade postgresql'-"$VERSION"
 		echo 'sudo apt install postgresql-client'-"$VERSION"
@@ -120,6 +133,21 @@ for VERSION in "${VERSIONS[@]}"; do
 		echo 'systemctl unmask postgresql'-"$VERSION"
 	fi
 done
+
+printf '\n'
+
+#Нужно добавить команды рестарта БД и в зависимости от того, есть тут баунсеры или нет, сформировать для них команды паузы и resume
+if [ "$PGBOUNCER_COUNT" -ne 0 ]; then
+  echo 'pgbouncer - pause'
+fi
+
+echo 'It is necessary to restart postgresql'
+
+if [ "$PGBOUNCER_COUNT" -ne 0 ]; then
+  echo 'pgbouncer - resume'
+fi
+
+printf '\n'
 
 echo "psql -c 'select version()'"
 echo "check logs"
