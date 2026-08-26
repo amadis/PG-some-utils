@@ -64,10 +64,15 @@ for pid in $(pgrep -f "(postgres|postmaster).*-D"); do
 		PORT=$(sed -n '4p' "$DATA_DIR/postmaster.pid")
 		echo -n 'port:' $PORT $DATA_DIR
 		if psql -p "$PORT" -Atqc "SELECT EXISTS (SELECT 1 FROM pg_stat_replication);" | grep -q t; then
-            echo "  Has replica(s)"
-        else
-            echo "  No replicas"
-        fi
+                  echo "  Has replica(s)"
+                else
+                  echo "  No replicas"
+                fi
+                echo 'Extensions:'
+                for db in $( psql -p $PORT -Xt1c 'SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname;' ); do 
+                  psql -d $db -p $PORT -F ' ' -XAt1c 'SELECT rpad(current_database(), 40) AS db_name, rpad(extname, 30), extversion FROM pg_extension where extname!=$$plpgsql$$ ORDER BY extname;';
+                done
+                printf '\n'
     fi
 done
 
